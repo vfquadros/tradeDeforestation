@@ -53,9 +53,6 @@ for t = 1:params.Tmax-1
     % ===== Step 2 (NxN): farmers' profit and price R =====
     FarmersProfit = max(q1.*F + q2.*params.wage - q3.*A - params.wage/(1-params.beta), (A - params.wage)/(1-params.beta));
     R(:,:,t) = w1.*DiffProfit + (1-w1).*FarmersProfit;              % adjust weights as desired
-    %q2
-    %DiffProfit(27:33,24:33)
-    %FarmersProfit(117:123,117:123)
     % ===== Farmers' decisions (NxN) =====
     Vu = value_u(params,A, R(:,:,t), F);
     Vp = value_p(params,A, F);
@@ -155,4 +152,4 @@ ylabel('Cumulative Emissions');
 title('Cumulative Emissions over Time');
 grid on;
 
-ret = true;
+ret = D;
