@@ -104,7 +104,7 @@ for t = 1:params.Tmax-1
     aux(~Dnow) = 0;
     Onext = Onow + aux;
 
-    Candidates = Dnext & ~Abiz;  % plots that can gain rights
+    Candidates = Dnext & ~Abiz & border ==1;  % plots that can gain rights
 
     % Random only on candidate set (saves time & memory)
     candIdx = find(Candidates & (L==0));
@@ -136,77 +136,116 @@ for t = 1:params.Tmax-1
     % D(:,:,t+1) = Dnext; O(:,:,t+1) = Onext; Agribusiness(:,:,t+1) = Abiz_next;
 end
 
-% === Final Heatmaps ===
-% Figure 1: Initial x Final Feforestiation
-figure;
-subplot(1,2,1)
+estados = readgeotable("..\02_inputs\states_legal_amazon.shp");
 
-% --- Base map (D) ---
-imagesc(D(:,:,1));
-colormap([0 1 0; 1 0 0]);   % green for 0, red for 1
-clim([0 1]);
-hold on;
+%% ---- INPUTS expected ----
+% D(:,:,1)     : initial deforestation (0/1)
+% Dnow         : final deforestation (0/1)
+% Protected    : protected raster (0/1), used for both unless Pnow provided
+% (optional) Pnow : protected raster at final time (0/1)
+% Agribusiness : initial agribusiness raster (0/1)
+% Abiz         : final agribusiness raster (0/1)
+% mask         : raster mask (1 = on map, 0 = off map)
+% estados      : vector layer with state borders (e.g., shaperead mapstruct)
 
-% Remove continuous colorbar
-colorbar('off');
+%% ---- Derive masks & sanity checks ----
+%% Expected inputs:
+% D(:,:,1)  -> initial deforestation (0/1)
+% Dnow      -> final deforestation (0/1)
+% Protected -> protected areas (0/1)  [optionally Pnow; otherwise Protected reused]
+% Agribusiness -> initial agribusiness (0/1)
+% Abiz         -> final agribusiness (0/1)
+% mask      -> 1 inside map, 0 outside (same size as D(:,:,1))
+% estados   -> vector borders (mapstruct with X/Y or Lon/Lat, polyshape, or geotable-like)
 
-% Figure 2
-% --- Overlay (L) only where D==0 ---
-overlayRGB = zeros([size(L), 3]);  % initialize RGB image
-overlayRGB(:,:,3) = 1;             % blue channel = 1
+%% Masks (logical) and consistency
+D0 = logical(D(1:params.m,1:params.n,1));   D1 = logical(Dnow(1:params.m,1:params.n));
+P0 = logical(L(1:params.m,1:params.n));
+P1 = P0;
+A0 = Agribusiness(1:params.m,1:params.n,1);
+A1 = A0;
 
-% Alpha mask: 1 only where L==1 and D==0
-alphaMask = double(L == 1 & squeeze(D(:,:,1)) == 0);
+F0 = ~D0;   F1 = ~D1;
 
-% Expand alpha mask to match image size if needed
-hOverlay = imagesc(overlayRGB);
-set(hOverlay, 'AlphaData', alphaMask);
+mask01 = logical(mask(1:params.m,1:params.n));
 
-hold off;
-title('Initial Deforestation');
+% Erase off-map
+F0 = F0 & mask01;  P0 = P0 & mask01;  D0 = D0 & mask01;  A0 = A0 & mask01;
+F1 = F1 & mask01;  P1 = P1 & mask01;  D1 = D1 & mask01;  A1 = A1 & mask01;
 
-subplot(1,2,2)
-imagesc(Dnow); colormap([0 1 0; 1 0 0]);   % green for 0, red for 1
-clim([0 1]);
-hold on;
+[m,n] = size(D0);
 
-% Remove continuous colorbar
-colorbar('off');
+%% Colors (Forest, Deforested, Protected, Agribusiness)
+clrForest = [0.00 0.55 0.00];   % darker green
+clrDefor  = [0.55 0.20 0.75];   % (unchanged) red
+clrProt   = [0.50 0.72 1.00];   % lighter blue
+clrAgri   = [1.00 0.00 0.00];   % purple (replaces yellow)
+greyLines = [0.15 0.15 0.15];   % darker neutral grey for estados lines (optional)
+alphaLay  = 0.95;               % (unchanged)
 
-% Add a custom discrete legend
-h = zeros(3,1); % placeholder for legend handles
-h(1) = plot(NaN,NaN,'s','MarkerFaceColor',[0 1 0],'MarkerEdgeColor','k'); % green square
-h(2) = plot(NaN,NaN,'s','MarkerFaceColor',[1 0 0],'MarkerEdgeColor','k'); % red square
-h(3) = plot(NaN,NaN,'s','MarkerFaceColor',[0 0 1],'MarkerEdgeColor','k'); % blue square
-legend(h,{'Forest','Deforested', 'Protected'},'Location','bestoutside');
+% Painter for a solid truecolor layer with alpha mask
+paintLayer = @(ax,mask3,color,alphaVal) image(ax, ...
+    'CData', repmat(reshape(color,1,1,3), [m n 1]), ...
+    'AlphaData', double(mask3) * alphaVal);
 
-% --- Overlay (L) only where D==0 ---
-overlayRGB = zeros([size(L), 3]);  % initialize RGB image
-overlayRGB(:,:,3) = 1;             % blue channel = 1
+%% Figure with two maps and shared legend at bottom
+t = tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
 
-% Alpha mask: 1 only where L==1 and D==0
-alphaMask = double(L == 1 & squeeze(Dnow) == 0);
+% ---------- Left: Initial ----------
+ax1 = nexttile(t,1);
+hold(ax1,'on'); axis(ax1,'image'); set(ax1,'YDir','reverse');  % correct orientation
+title(ax1,'Initial Deforestation');
+% base white (so masked-out is white)
+image(ax1,'CData',ones(m,n,3),'AlphaData',ones(m,n));
 
-% Expand alpha mask to match image size if needed
-hOverlay = imagesc(overlayRGB);
-set(hOverlay, 'AlphaData', alphaMask);
+% Draw in required order: Forest -> Protected -> Deforested -> Agribusiness
+paintLayer(ax1, F0, clrForest, alphaLay);
+paintLayer(ax1, P0, clrProt,   alphaLay);
+paintLayer(ax1, D0, clrDefor,  alphaLay);
+paintLayer(ax1, A0, clrAgri,   alphaLay);
 
-hold off;
-title('Final Deforestation');
+% estados on top (darker grey)
+plot_estados_top(ax1, estados, greyLines);
 
+axis(ax1,'tight'); ax1.XTick=[]; ax1.YTick=[]; box(ax1,'on'); hold(ax1,'off');
+
+% ---------- Right: Final ----------
+ax2 = nexttile(t,2);
+hold(ax2,'on'); axis(ax2,'image'); set(ax2,'YDir','reverse');
+title(ax2,'Final Deforestation');
+image(ax2,'CData',ones(m,n,3),'AlphaData',ones(m,n));
+
+paintLayer(ax2, F1, clrForest, alphaLay);
+paintLayer(ax2, P1, clrProt,   alphaLay);
+paintLayer(ax2, D1, clrDefor,  alphaLay);
+paintLayer(ax2, A1, clrAgri,   alphaLay);
+
+plot_estados_top(ax2, estados, greyLines);
+
+axis(ax2,'tight'); ax2.XTick=[]; ax2.YTick=[]; box(ax2,'on'); hold(ax2,'off');
+
+% ---------- Shared bottom legend (force 4 entries) ----------
+hold(ax2,'on');  % create legend handles here
+hL(1) = plot(ax2, NaN,NaN,'s','MarkerFaceColor',clrForest,'MarkerEdgeColor','k','LineStyle','none','MarkerSize',10,'DisplayName','Forest');
+hL(2) = plot(ax2, NaN,NaN,'s','MarkerFaceColor',clrProt  ,'MarkerEdgeColor','k','LineStyle','none','MarkerSize',10,'DisplayName','Protected');
+hL(3) = plot(ax2, NaN,NaN,'s','MarkerFaceColor',clrDefor ,'MarkerEdgeColor','k','LineStyle','none','MarkerSize',10,'DisplayName','Deforested');
+hL(4) = plot(ax2, NaN,NaN,'s','MarkerFaceColor',clrAgri  ,'MarkerEdgeColor','k','LineStyle','none','MarkerSize',10,'DisplayName','Agribusiness');
+hold(ax2,'off');
+
+lg = legend(hL, 'Orientation','horizontal','NumColumns',4,'AutoUpdate','off');
+lg.Layout.Tile = 'south';
+
+
+%% -------- Deforestation & Emissions Time Series --------
 figure;
 subplot(1,2,1)
 plot(1:params.Tmax-1, deforest(1:params.Tmax-1), '-o', 'LineWidth', 1.5);
-xlabel('Time');
-ylabel('Cumulative Deforestation');
-title('Deforestation over Time');
-grid on;
+xlabel('Time'); ylabel('Cumulative Deforestation');
+title('Deforestation over Time'); grid on;
 
 subplot(1,2,2)
 plot(1:params.Tmax-1, emissions(1:params.Tmax-1), '-o', 'LineWidth', 1.5);
-xlabel('Time');
-ylabel('Cumulative Emissions');
-title('Cumulative Emissions over Time');
-grid on;
+xlabel('Time'); ylabel('Cumulative Emissions');
+title('Cumulative Emissions over Time'); grid on;
 
 ret = D;
